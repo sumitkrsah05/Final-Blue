@@ -1,0 +1,169 @@
+{
+  "engagement_id": "eng-web-black_box-4f2a91cd",
+  "mode": "black_box",
+  "target": "demo.testfire.net",
+  "started_at": "2026-08-06T09:14:00Z",
+  "completed_at": "2026-08-06T09:41:22Z",
+  "posture": {
+    "assets": 4,
+    "findings": 8,
+    "severity_counts": {
+      "critical": 1,
+      "high": 2,
+      "medium": 2,
+      "low": 2,
+      "info": 1
+    },
+    "top_risk": 92
+  },
+  "detection_coverage": {
+    "total_actions": 46,
+    "coverage_pct": 21.7,
+    "mean_ttd_seconds": 412,
+    "gaps": [
+      "No alerting on repeated 500 responses from the application tier",
+      "Administrative console logins are not forwarded to the SIEM"
+    ]
+  },
+  "findings": [
+    {
+      "id": "find-a41c9e2b7d10",
+      "title": "SQL Injection in login form (uid parameter)",
+      "severity": "critical",
+      "asset": "https://demo.testfire.net/bank/login.jsp",
+      "cvss": 9.8,
+      "epss": 0.71,
+      "risk": 92,
+      "priority": "critical",
+      "cve_ids": [],
+      "techniques": ["T1190"],
+      "detection": "MISSED",
+      "description": "The uid parameter of the login form is concatenated directly into a SQL statement. A single-quote payload produces a database error, and boolean-based conditions alter the authentication outcome, confirming that input is parsed as SQL.",
+      "evidence": "POST /bank/login.jsp uid=admin'--&passw=x -> HTTP 302 to /bank/main.jsp (authenticated session established without a valid password). Control request uid=admin&passw=x -> HTTP 200 with 'Login Failed'.",
+      "sources": ["sqlmap", "manual-validation"],
+      "references": [
+        "https://owasp.org/www-community/attacks/SQL_Injection",
+        "https://cwe.mitre.org/data/definitions/89.html"
+      ]
+    },
+    {
+      "id": "find-7b3d05fa9c48",
+      "title": "Default administrative credentials accepted on /admin",
+      "severity": "high",
+      "asset": "https://demo.testfire.net/admin/",
+      "cvss": 8.8,
+      "epss": 0.33,
+      "risk": 84,
+      "priority": "high",
+      "cve_ids": [],
+      "techniques": ["T1078.001"],
+      "detection": "MISSED",
+      "description": "The administrative interface authenticates the shipped default account. No multi-factor challenge is presented and the interface is reachable from the public internet.",
+      "evidence": "GET /admin/ -> 401; POST /admin/j_security_check with admin:admin -> 302 to /admin/dashboard.jsp with JSESSIONID issued.",
+      "sources": ["nuclei", "manual-validation"],
+      "references": ["https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"]
+    },
+    {
+      "id": "find-c92f10ab34d6",
+      "title": "Apache Tomcat 8.5.31 — multiple known vulnerabilities",
+      "severity": "high",
+      "asset": "demo.testfire.net:443",
+      "cvss": 7.5,
+      "epss": 0.18,
+      "risk": 71,
+      "priority": "high",
+      "cve_ids": ["CVE-2020-1938", "CVE-2019-0232"],
+      "techniques": ["T1190", "T1518"],
+      "detection": "UNKNOWN",
+      "description": "The server banner and error pages identify Apache Tomcat 8.5.31, which is past end of support and affected by publicly documented vulnerabilities including the Ghostcat AJP file read issue.",
+      "evidence": "Server: Apache-Coyote/1.1; 404 page footer reports 'Apache Tomcat/8.5.31'.",
+      "sources": ["nuclei", "nmap"],
+      "references": ["https://nvd.nist.gov/vuln/detail/CVE-2020-1938"]
+    },
+    {
+      "id": "find-1de6740b8f92",
+      "title": "Reflected Cross-Site Scripting in search parameter",
+      "severity": "medium",
+      "asset": "https://demo.testfire.net/search.jsp",
+      "cvss": 6.1,
+      "risk": 58,
+      "priority": "medium",
+      "cve_ids": [],
+      "techniques": [],
+      "detection": "PARTIAL",
+      "description": "The query parameter is reflected into the response body without contextual output encoding, allowing script execution in the context of the application origin.",
+      "evidence": "GET /search.jsp?query=<script>alert(1)</script> -> the payload appears unencoded inside the results heading element.",
+      "sources": ["dalfox"],
+      "references": ["https://owasp.org/www-community/attacks/xss/"]
+    },
+    {
+      "id": "find-88a0cd3e5117",
+      "title": "Missing security response headers",
+      "severity": "medium",
+      "asset": "https://demo.testfire.net",
+      "cvss": 5.3,
+      "risk": 44,
+      "priority": "medium",
+      "cve_ids": [],
+      "techniques": [],
+      "detection": "UNKNOWN",
+      "description": "Responses omit Content-Security-Policy, X-Frame-Options, X-Content-Type-Options and Strict-Transport-Security.",
+      "evidence": "HEAD / -> response headers: Server, Date, Content-Type, Set-Cookie. None of the expected security headers are present.",
+      "sources": ["nuclei"],
+      "references": ["https://owasp.org/www-project-secure-headers/"]
+    },
+    {
+      "id": "find-061e418c8d76",
+      "title": "Expired SSL Certificate",
+      "severity": "low",
+      "asset": "demo.testfire.net:443",
+      "cvss": null,
+      "epss": null,
+      "risk": 30,
+      "priority": "low",
+      "cve_ids": [],
+      "techniques": [],
+      "detection": "UNKNOWN",
+      "sources": ["nuclei"]
+    },
+    {
+      "id": "find-3bd4da4e7c07",
+      "title": "Weak Cipher Suites Detection",
+      "severity": "low",
+      "asset": "demo.testfire.net:443",
+      "cvss": null,
+      "risk": 30,
+      "priority": "low",
+      "cve_ids": [],
+      "techniques": [],
+      "detection": "UNKNOWN",
+      "sources": ["nuclei"]
+    },
+    {
+      "id": "find-45dc6bd1e595",
+      "title": "TLS Version - Detect",
+      "severity": "info",
+      "asset": "demo.testfire.net:443",
+      "risk": 10,
+      "priority": "info",
+      "techniques": ["T1046"],
+      "detection": "UNKNOWN",
+      "sources": ["nuclei"]
+    }
+  ],
+  "attack_paths": [
+    {
+      "id": "path-01",
+      "steps": [
+        "Discover login form at /bank/login.jsp",
+        "Bypass authentication via SQL injection in uid",
+        "Access authenticated banking session and customer records"
+      ],
+      "terminal_impact": "Unauthorised access to customer financial records"
+    }
+  ],
+  "gaps": [
+    "Application error responses are not monitored",
+    "No WAF in front of the application tier"
+  ]
+}
