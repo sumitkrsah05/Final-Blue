@@ -253,6 +253,118 @@ def test_bad_limit_is_rejected(client):
     assert client.get("/api/v1/analyses?limit=abc").status_code == 400
 
 
+# --- chat ------------------------------------------------------------------
+
+
+class FakeChatService:
+    """Stands in for ChatService so chat tests never need a live LLM."""
+
+    last_call = None
+
+    def __init__(self, settings, provider=None):
+        self.settings = settings
+
+    @property
+    def available(self):
+        return True
+
+    def reply(self, document, message, history=()):
+        FakeChatService.last_call = {
+            "document": document,
+            "message": message,
+            "history": list(history),
+        }
+        return "The SQL injection finding is the top priority."
+
+
+@pytest.fixture
+def completed_job(client, sample_document):
+    job_id = submit(client, {"report": sample_document, "options": OFFLINE})
+    wait_for(client, job_id)
+    return job_id
+
+
+def test_chat_returns_a_grounded_reply(client, completed_job, monkeypatch):
+    import api.server as server
+
+    monkeypatch.setattr(server, "ChatService", FakeChatService)
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+
+    response = client.post(
+        f"/api/v1/analyses/{completed_job}/chat",
+        json={"message": "What should we fix first?", "history": history},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["reply"] == "The SQL injection finding is the top priority."
+    # The returned history is ready to send back verbatim on the next turn.
+    assert body["history"] == history + [
+        {"role": "user", "content": "What should we fix first?"},
+        {"role": "assistant", "content": body["reply"]},
+    ]
+    # The service was handed the full analysis document as grounding.
+    assert FakeChatService.last_call["document"]["target"] == "demo.testfire.net"
+    assert FakeChatService.last_call["history"] == history
+
+
+def test_chat_link_is_advertised_on_the_job(client, completed_job):
+    job = client.get(f"/api/v1/analyses/{completed_job}").json()
+    assert job["links"]["chat"] == f"/api/v1/analyses/{completed_job}/chat"
+
+
+def test_chat_on_unknown_job_returns_404(client):
+    assert client.post("/api/v1/analyses/nope/chat", json={"message": "hi"}).status_code == 404
+
+
+def test_chat_before_completion_returns_409(client, sample_document):
+    import api.server as server
+
+    job = server._store.create(AnalysisRequest(report=sample_document, options=OFFLINE))
+    server._store._update(job["job_id"], status="running")
+
+    response = client.post(f"/api/v1/analyses/{job['job_id']}/chat", json={"message": "hi"})
+    assert response.status_code == 409
+    assert "chat unavailable" in response.json()["error"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"message": ""},
+        {"message": "   "},
+        {"message": 42},
+        {"message": "hi", "history": "not a list"},
+        {"message": "hi", "history": [{"role": "system", "content": "x"}]},
+        {"message": "hi", "history": [{"role": "user"}]},
+        {"message": "hi", "unknown_field": 1},
+    ],
+)
+def test_invalid_chat_bodies_are_rejected_with_422(client, completed_job, body):
+    response = client.post(f"/api/v1/analyses/{completed_job}/chat", json=body)
+    assert response.status_code == 422, response.text
+
+
+def test_chat_without_a_live_llm_returns_503(client, completed_job, monkeypatch):
+    import api.server as server
+
+    class OfflineChat:
+        def __init__(self, settings, provider=None):
+            pass
+
+        @property
+        def available(self):
+            return False
+
+    monkeypatch.setattr(server, "ChatService", OfflineChat)
+    response = client.post(f"/api/v1/analyses/{completed_job}/chat", json={"message": "hi"})
+    assert response.status_code == 503
+    assert "live LLM" in response.json()["error"]
+
+
 # --- CORS ------------------------------------------------------------------
 
 

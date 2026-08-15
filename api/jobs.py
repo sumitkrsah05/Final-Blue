@@ -277,6 +277,7 @@ class JobStore:
                 "self": f"/api/v1/analyses/{job_id}",
                 "report": f"/api/v1/analyses/{job_id}/report",
                 "markdown": f"/api/v1/analyses/{job_id}/report.md",
+                "chat": f"/api/v1/analyses/{job_id}/chat",
             },
             "error": None,
         }

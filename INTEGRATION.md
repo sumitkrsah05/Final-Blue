@@ -185,6 +185,85 @@ The rendered Markdown report as `text/markdown`. Add `?download=1` for a
 `Content-Disposition: attachment` header, which gives you a one-line download
 button.
 
+### `POST /api/v1/analyses/{job_id}/chat`
+
+Ask a question about a **completed** analysis — this powers the chat panel next
+to the rendered report. The reply is grounded in that job's
+`blue_analysis.json`: the model is handed the summaries and every finding as
+context, answers in Markdown, and is instructed to say so rather than invent
+when a question falls outside the report.
+
+The endpoint is **stateless**: your frontend keeps the transcript and sends it
+back as `history` on every turn. The response returns the updated `history`
+(including this turn), ready to store verbatim for the next request.
+
+Request:
+
+```json
+{
+  "message": "Which finding should we fix first, and why?",
+  "history": [
+    { "role": "user", "content": "summarise the report" },
+    { "role": "assistant", "content": "The assessment found 8 issues..." }
+  ]
+}
+```
+
+`history` is optional (omit it on the first turn). Only `user` and `assistant`
+roles are accepted; the last 20 turns are kept. `message` is capped at 8,000
+characters.
+
+Response `200`:
+
+```json
+{
+  "job_id": "9a1167392be64797912abf6e13c2b1c7",
+  "reply": "Start with **SQL Injection in login form** (find-a41c9e2b7d10)...",
+  "model": "qwen3-32b",
+  "history": [
+    { "role": "user", "content": "summarise the report" },
+    { "role": "assistant", "content": "The assessment found 8 issues..." },
+    { "role": "user", "content": "Which finding should we fix first, and why?" },
+    { "role": "assistant", "content": "Start with **SQL Injection in login form**..." }
+  ]
+}
+```
+
+Render `reply` as Markdown. Errors:
+
+| Status | Meaning |
+| --- | --- |
+| `404` | unknown `job_id` |
+| `409` | analysis not completed yet (body carries `status` + `progress`) |
+| `422` | bad body: empty message, bad `history` shape, unknown fields |
+| `502` | the LLM could not be reached after retries |
+| `503` | no LLM configured — chat has **no heuristic fallback**, unlike analysis |
+
+Minimal frontend wiring:
+
+```js
+const BLUE_API = "http://localhost:8001";
+let history = [];
+
+export async function askReport(jobId, message) {
+  const res = await fetch(`${BLUE_API}/api/v1/analyses/${jobId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error);
+  const body = await res.json();
+  history = body.history;         // send back verbatim on the next turn
+  return body.reply;              // Markdown — render with your MD component
+}
+```
+
+Like analysis, the first turn after an idle period can be slow (the Modal
+endpoint scales to zero), so show a typing indicator and keep the request
+timeout generous. Whether chat is available is advertised in
+`GET /api/v1/config` under `chat.available`, and each job links its own chat
+endpoint at `links.chat`.
+
 ### `GET /api/v1/analyses?limit=50`
 
 Recent jobs, newest first, without their findings arrays — for a history table.

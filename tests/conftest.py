@@ -20,8 +20,12 @@ SAMPLE_REPORT_PATH = PROJECT_ROOT / "input" / "sample_report.json"
 @pytest.fixture(autouse=True)
 def _isolate_environment(monkeypatch, tmp_path):
     """Stop a developer's real .env or exported vars from reaching the tests."""
+    # Settings.from_env loads PROJECT_ROOT/.env with override=False, so deleting
+    # LLM_PROVIDER is not enough — the real .env would re-set it. Pinning it to
+    # "offline" wins over dotenv and keeps the suite off the network even when a
+    # developer's .env points at a live endpoint.
+    monkeypatch.setenv("LLM_PROVIDER", "offline")
     for name in (
-        "LLM_PROVIDER",
         "MODAL_LLM_BASE_URL",
         "MODAL_API_KEY",
         "LLM_BASE_URL",

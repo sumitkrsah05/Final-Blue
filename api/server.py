@@ -12,6 +12,7 @@ the website owns 3000.
     GET    /api/v1/analyses/{job_id}            status + progress + summary
     GET    /api/v1/analyses/{job_id}/report     full blue_analysis.json
     GET    /api/v1/analyses/{job_id}/report.md  blue_report.md as text/markdown
+    POST   /api/v1/analyses/{job_id}/chat       ask a question about the report
     DELETE /api/v1/analyses/{job_id}            forget a job and its artefacts
 
 Run it with::
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -42,6 +44,8 @@ from api.jobs import (
     STATUS_COMPLETED,
 )
 from config import Settings
+from services.chat import ChatService, ChatValidationError, validate_chat_turn
+from services.llm import LLMError
 from services.report_generator import MARKDOWN_FILENAME
 from utils.logger import configure_logging, get_logger
 
@@ -113,6 +117,12 @@ async def config(_: Request) -> JSONResponse:
             "options": sorted(ALLOWED_OPTIONS | {"offline"}),
             "severities": ["critical", "high", "medium", "low", "info", "unknown"],
             "statuses": ["queued", "running", "completed", "error"],
+            "chat": {
+                "available": settings.llm_configured,
+                "endpoint": "/api/v1/analyses/{job_id}/chat",
+                "note": "POST {message, history} once a job is completed; "
+                "chat has no heuristic fallback and returns 503 when offline.",
+            },
         }
     )
 
@@ -206,6 +216,82 @@ async def get_markdown(request: Request) -> Response:
     )
 
 
+async def chat_with_report(request: Request) -> JSONResponse:
+    """Answer one chat turn grounded in a completed analysis.
+
+    The endpoint is stateless: the frontend keeps the transcript and sends it
+    back as ``history`` on every turn, so the reply always has the full
+    conversation without the server tracking sessions.
+
+    Body::
+
+        {"message": "which finding should we fix first?",
+         "history": [{"role": "user", "content": "..."},
+                     {"role": "assistant", "content": "..."}]}
+
+    Returns ``{reply, model, history}`` where ``history`` already includes this
+    turn — the frontend can store it verbatim for the next request.
+    """
+    job_id = request.path_params["job_id"]
+    job = _store.get(job_id)
+    if job is None:
+        return _error("unknown job_id", 404)
+    if job["status"] != STATUS_COMPLETED:
+        return _error(
+            f"chat unavailable until the analysis completes (status={job['status']})",
+            409,
+            status=job["status"],
+            progress=job.get("progress"),
+        )
+    document = _store.analysis(job_id)
+    if document is None:
+        return _error("analysis missing for a completed job", 500)
+
+    try:
+        body = await _json_body(request)
+    except RequestError as exc:
+        return _error(str(exc), exc.status_code)
+    if not isinstance(body, dict):
+        return _error("request body must be a JSON object", 422)
+    unknown = set(body) - {"message", "history"}
+    if unknown:
+        return _error(f"unknown field(s): {sorted(unknown)}; expected message, history", 422)
+
+    try:
+        message, history = validate_chat_turn(body.get("message"), body.get("history"))
+    except ChatValidationError as exc:
+        return _error(str(exc), 422)
+
+    settings = Settings.from_env()
+    chat = ChatService(settings)
+    if not chat.available:
+        return _error(
+            "chat requires a live LLM and this deployment is running offline "
+            "(heuristics only); configure an LLM endpoint to enable it",
+            503,
+        )
+
+    try:
+        # The provider is blocking urllib; keep the event loop free while it runs.
+        reply = await run_in_threadpool(chat.reply, document, message, history)
+    except LLMError as exc:
+        log.warning("Chat turn for job {} failed: {}", job_id, exc)
+        return _error(f"the model could not be reached: {exc}", 502)
+
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "reply": reply,
+            "model": settings.model_name,
+            "history": [
+                *history,
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": reply},
+            ],
+        }
+    )
+
+
 async def delete_analysis(request: Request) -> Response:
     """Forget a job and delete its artefacts."""
     if not _store.delete(request.path_params["job_id"]):
@@ -222,6 +308,7 @@ routes = [
     Route("/api/v1/analyses/{job_id}", delete_analysis, methods=["DELETE"]),
     Route("/api/v1/analyses/{job_id}/report", get_report, methods=["GET"]),
     Route("/api/v1/analyses/{job_id}/report.md", get_markdown, methods=["GET"]),
+    Route("/api/v1/analyses/{job_id}/chat", chat_with_report, methods=["POST"]),
 ]
 
 # The website runs on its own origin (localhost:3000), and it sends

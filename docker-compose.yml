@@ -1,0 +1,25 @@
+services:
+  blue-agent:
+    build: .
+    container_name: blue-agent
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      BLUE_API_HOST: 0.0.0.0
+      BLUE_API_PORT: "8001"
+      # Reach a Red Agent running on the host machine (port 8000).
+      # RED_AGENT_URL: http://host.docker.internal:8000
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
